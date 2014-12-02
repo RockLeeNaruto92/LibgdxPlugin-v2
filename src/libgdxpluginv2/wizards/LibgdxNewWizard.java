@@ -1,19 +1,21 @@
 package libgdxpluginv2.wizards;
 
+import java.lang.reflect.InvocationTargetException;
+
+import org.eclipse.core.resources.IProject;
+import org.eclipse.core.resources.IProjectDescription;
+import org.eclipse.core.resources.ResourcesPlugin;
+import org.eclipse.core.runtime.CoreException;
+import org.eclipse.core.runtime.IProgressMonitor;
+import org.eclipse.core.runtime.Path;
+import org.eclipse.jface.dialogs.MessageDialog;
+import org.eclipse.jface.operation.IRunnableWithProgress;
+import org.eclipse.jface.viewers.ISelection;
 import org.eclipse.jface.viewers.IStructuredSelection;
 import org.eclipse.jface.wizard.Wizard;
 import org.eclipse.ui.INewWizard;
 import org.eclipse.ui.IWorkbench;
-import org.eclipse.core.runtime.*;
-import org.eclipse.jface.operation.*;
-import java.lang.reflect.InvocationTargetException;
-import org.eclipse.jface.dialogs.MessageDialog;
-import org.eclipse.jface.viewers.ISelection;
-import org.eclipse.core.resources.*;
-import org.eclipse.core.runtime.CoreException;
-import java.io.*;
-import org.eclipse.ui.*;
-import org.eclipse.ui.ide.IDE;
+import org.eclipse.ui.IWorkbenchWizard;
 
 /**
  * This is a sample new wizard. Its role is to create a new file 
@@ -48,17 +50,31 @@ public class LibgdxNewWizard extends Wizard implements INewWizard {
 	}
 
 	/**
-	 * This method is called when 'Finish' button is pressed in
-	 * the wizard. We will create an operation and run it
-	 * using wizard as execution context.
+	 * This method is called when 'Finish' button is pressed in the wizard. We
+	 * will create an operation and run it using wizard as execution context.
 	 */
 	public boolean performFinish() {
-		final String containerName = page.getContainerName();
-		final String fileName = page.getFileName();
+		// final String containerName = "container";
+		// final String fileName = "examples";
+		//
+		final String pName = page.getProjectName();
+		final String pMainPackage = page.getProjectMainPackage();
+		final String pMainClass = page.getProjectMainClass();
+		final String pDestinationFolder = page.getProjectDestinationFolder();
+		final boolean isCreateDesktopVersion = page.isCreateDesktopProject();
+		
+		System.out.println("name: " + pName);
+		System.out.println("package: " + pMainPackage);
+		System.out.println("class: " + pMainClass);
+		System.out.println("folder: " + pDestinationFolder);
+		System.out.println("create desktop: " + isCreateDesktopVersion);
+
 		IRunnableWithProgress op = new IRunnableWithProgress() {
-			public void run(IProgressMonitor monitor) throws InvocationTargetException {
+			public void run(IProgressMonitor monitor)
+					throws InvocationTargetException {
 				try {
-					doFinish(containerName, fileName, monitor);
+					doFinish(pName, pMainPackage, pMainClass,
+							pDestinationFolder, isCreateDesktopVersion, monitor);
 				} catch (CoreException e) {
 					throw new InvocationTargetException(e);
 				} finally {
@@ -72,76 +88,64 @@ public class LibgdxNewWizard extends Wizard implements INewWizard {
 			return false;
 		} catch (InvocationTargetException e) {
 			Throwable realException = e.getTargetException();
-			MessageDialog.openError(getShell(), "Error", realException.getMessage());
+			MessageDialog.openError(getShell(), "Error",
+					realException.getMessage());
 			return false;
 		}
 		return true;
 	}
-	
+
 	/**
-	 * The worker method. It will find the container, create the
-	 * file if missing or just replace its contents, and open
-	 * the editor on the newly created file.
+	 * The worker method. It will find the container, create the file if missing
+	 * or just replace its contents, and open the editor on the newly created
+	 * file.
 	 */
 
-	private void doFinish(
-		String containerName,
-		String fileName,
-		IProgressMonitor monitor)
-		throws CoreException {
-		// create a sample file
-		monitor.beginTask("Creating " + fileName, 2);
-		IWorkspaceRoot root = ResourcesPlugin.getWorkspace().getRoot();
-		IResource resource = root.findMember(new Path(containerName));
-		if (!resource.exists() || !(resource instanceof IContainer)) {
-			throwCoreException("Container \"" + containerName + "\" does not exist.");
+	private void doFinish(String projectName, String projectMainPackage,
+			String projectMainClass, String projectDestinationFolder,
+			boolean isCreateDesktopVersion, IProgressMonitor monitor)
+			throws CoreException {
+		// create project
+		System.out.println("do finissh");
+		monitor.beginTask("Creating project " + projectName, 2);
+		System.out.println("monitor begin task");
+		
+		NewProjectLibgdxCreation creation = new NewProjectLibgdxCreation(projectName, projectMainPackage, projectMainClass, projectDestinationFolder, isCreateDesktopVersion);
+		
+		creation.createMainFolder();
+		String coreDescriptionFilePath = creation.createCoreProject();
+		importProject(monitor, projectName, coreDescriptionFilePath);
+		
+		String androidDesciptionFilePath = creation.createAndroidProject();
+		importProject(monitor, projectName + Constant.EXTENSION_ANDROID, androidDesciptionFilePath);
+		
+		if (isCreateDesktopVersion){
+			String desktopDescriptionFilePath = creation.createDesktopProject();
+			importProject(monitor, projectName + Constant.EXTENSION_ANDROID, desktopDescriptionFilePath);
 		}
-		IContainer container = (IContainer) resource;
-		final IFile file = container.getFile(new Path(fileName));
-		try {
-			InputStream stream = openContentStream();
-			if (file.exists()) {
-				file.setContents(stream, true, true, monitor);
-			} else {
-				file.create(stream, true, monitor);
-			}
-			stream.close();
-		} catch (IOException e) {
-		}
-		monitor.worked(1);
-		monitor.setTaskName("Opening file for editing...");
-		getShell().getDisplay().asyncExec(new Runnable() {
-			public void run() {
-				IWorkbenchPage page =
-					PlatformUI.getWorkbench().getActiveWorkbenchWindow().getActivePage();
-				try {
-					IDE.openEditor(page, file, true);
-				} catch (PartInitException e) {
-				}
-			}
-		});
+		
 		monitor.worked(1);
 	}
-	
-	/**
-	 * We will initialize file contents with a sample text.
-	 */
 
-	private InputStream openContentStream() {
-		String contents =
-			"This is the initial file contents for *.mpe file that should be word-sorted in the Preview page of the multi-page editor";
-		return new ByteArrayInputStream(contents.getBytes());
-	}
+	public void importProject(IProgressMonitor monitor, String projectName, String descriptionPath) throws CoreException {
+		IProject newProject = ResourcesPlugin.getWorkspace().getRoot().getProject(projectName);
 
-	private void throwCoreException(String message) throws CoreException {
-		IStatus status =
-			new Status(IStatus.ERROR, "LibgdxPlugin-v2", IStatus.OK, message, null);
-		throw new CoreException(status);
+		if (!newProject.exists()) {
+			IProjectDescription description = ResourcesPlugin.getWorkspace().loadProjectDescription(new Path(descriptionPath));
+			newProject.create(description, monitor);
+			newProject.open(monitor);
+			System.out.println("Created project: " + projectName + " with description file: " + descriptionPath);
+		} else if (!newProject.isOpen()) {
+			newProject.open(monitor);
+		}
+		
+		System.out.println("Complete import project " + projectName);
 	}
 
 	/**
-	 * We will accept the selection in the workbench to see if
-	 * we can initialize from it.
+	 * We will accept the selection in the workbench to see if we can initialize
+	 * from it.
+	 * 
 	 * @see IWorkbenchWizard#init(IWorkbench, IStructuredSelection)
 	 */
 	public void init(IWorkbench workbench, IStructuredSelection selection) {
